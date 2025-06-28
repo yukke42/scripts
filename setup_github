@@ -2,18 +2,18 @@
 
 # https://stackoverflow.com/questions/52340114/check-ssh-with-github-com-before-running-a-script
 function github-authenticated() {
-  ssh -T -i "$1" git@github.com > /dev/null 2>&1
-  RET=$?
-  if [ "$RET" == 1 ]; then
-    # user is authenticated, but fails to open a shell with GitHub 
-    return 0
-  elif [ "$RET" == 255 ]; then
-    echo "Permission denied: check if a ssh public key is registered to github."
-    return 1
-  else
-    echo "unknown exit code in attempt to ssh into git@github.com"
-    return 1
-  fi
+    ssh -T -i "$1" git@github.com >/dev/null 2>&1
+    RET=$?
+    if [ "$RET" == 1 ]; then
+        # user is authenticated, but fails to open a shell with GitHub
+        return 0
+    elif [ "$RET" == 255 ]; then
+        echo "Permission denied: check if a ssh public key is registered to github."
+        return 1
+    else
+        echo "unknown exit code in attempt to ssh into git@github.com"
+        return 1
+    fi
 }
 
 SSH_KEYFILE="$HOME/git"
