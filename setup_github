@@ -1,29 +1,124 @@
 #!/bin/bash
 
+set -euo pipefail # Exit on error, treat unset variables as error, fail on pipe errors
+
+# Logging functions
+log_info() {
+    echo "[INFO] $1" >&2
+}
+
+log_error() {
+    echo "[ERROR] $1" >&2
+}
+
+log_warning() {
+    echo "[WARNING] $1" >&2
+}
+
+# GitHub authentication check function
 # https://stackoverflow.com/questions/52340114/check-ssh-with-github-com-before-running-a-script
 function github-authenticated() {
-    ssh -T -i "$1" git@github.com >/dev/null 2>&1
-    RET=$?
-    if [ "$RET" == 1 ]; then
-        # user is authenticated, but fails to open a shell with GitHub
+    local ssh_keyfile="$1"
+
+    if [[ ! -f $ssh_keyfile ]]; then
+        log_error "SSH keyfile not found: $ssh_keyfile"
+        return 1
+    fi
+
+    if [[ ! -r $ssh_keyfile ]]; then
+        log_error "SSH keyfile is not readable: $ssh_keyfile"
+        return 1
+    fi
+
+    log_info "Checking GitHub authentication with keyfile: $ssh_keyfile"
+
+    ssh -T -i "$ssh_keyfile" git@github.com >/dev/null 2>&1
+    local ret=$?
+
+    case $ret in
+    1)
+        # User is authenticated but cannot open shell with GitHub (normal)
+        log_info "GitHub authentication successful"
         return 0
-    elif [ "$RET" == 255 ]; then
-        echo "Permission denied: check if a ssh public key is registered to github."
+        ;;
+    255)
+        log_error "Permission denied: SSH public key may not be registered to GitHub"
         return 1
+        ;;
+    *)
+        log_error "Unknown exit code ($ret) in attempt to SSH into git@github.com"
+        return 1
+        ;;
+    esac
+}
+
+# Backup .ssh directory function
+backup_ssh_directory() {
+    local ssh_dir="$HOME/.ssh"
+
+    if [[ ! -d $ssh_dir ]]; then
+        log_info "No existing .ssh directory found, skipping backup"
+        return 0
+    fi
+
+    local timestamp=$(date +"%Y%m%d_%H%M%S")
+    local backup_dir="${ssh_dir}.backup_${timestamp}"
+
+    log_info "Backing up existing .ssh directory to: $backup_dir"
+
+    if ! cp -r "$ssh_dir" "$backup_dir"; then
+        log_error "Failed to backup .ssh directory"
+        return 1
+    fi
+
+    log_info "Backup completed successfully"
+    return 0
+}
+
+# Main process
+main() {
+    # Use command line argument if provided, otherwise default to ~/.ssh/id_ed25519
+    local ssh_keyfile="${1:-$HOME/.ssh/id_ed25519}"
+
+    log_info "Starting GitHub SSH setup script"
+    log_info "Using SSH keyfile: $ssh_keyfile"
+
+    # Check GitHub authentication
+    if ! github-authenticated "$ssh_keyfile"; then
+        log_error "GitHub authentication failed. Exiting."
+        exit 1
+    fi
+
+    # Backup existing .ssh directory
+    if ! backup_ssh_directory; then
+        log_error "Backup failed. Exiting for safety."
+        exit 1
+    fi
+
+    # Remove existing .ssh directory
+    if [[ -d "$HOME/.ssh" ]]; then
+        log_info "Removing existing .ssh directory"
+        if ! rm -rf "$HOME/.ssh"; then
+            log_error "Failed to remove existing .ssh directory"
+            exit 1
+        fi
+    fi
+
+    # Clone dotssh repository
+    log_info "Cloning dotssh repository"
+    if ! git -c core.sshCommand="ssh -i ${ssh_keyfile} -F /dev/null" clone git@github.com:yukke42/dotssh.git ~/.ssh; then
+        log_error "Failed to clone dotssh repository"
+        exit 1
+    fi
+
+    # Final verification
+    log_info "Testing GitHub connection"
+    if ssh -T git@github.com; then
+        log_info "GitHub SSH setup completed successfully"
     else
-        echo "unknown exit code in attempt to ssh into git@github.com"
-        return 1
+        log_warning "SSH test completed, but may require manual verification"
     fi
 }
 
-SSH_KEYFILE="$HOME/git"
-if ! github-authenticated $SSH_KEYFILE; then
-    exit
-fi
-
-rm -rf $HOME/.ssh
-git -c core.sshCommand="ssh -i ${SSH_KEYFILE} -F /dev/null" clone git@github.com:yukke42/dotssh.git ~/.ssh
-cp "${SSH_KEYFILE}" $HOME/.ssh/conf.d/git
-cp "${SSH_KEYFILE}.pub" $HOME/.ssh/pub_keys
-
-ssh -T git@github.com
+# Execute script
+main "$@"
